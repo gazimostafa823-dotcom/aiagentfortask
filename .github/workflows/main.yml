@@ -1,43 +1,41 @@
-name: Instagram Comment Bot
+name: Instagram Automation Bot
 
 on:
   schedule:
-    # Runs every 5 minutes
-    - cron: '*/5 * * * *'
-  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+    - cron: '*/10 * * * *' # Runs every 10 minutes
+  workflow_dispatch:      # Allows manual trigger
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
+    # Added permissions to allow the bot to save the "processed_comments" file back to GitHub
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.x'
 
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run the bot script
+      - name: Run Bot
         env:
-          # Pass secrets and variables to the Python script
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
-          IG_USER_ID: ${{ vars.IG_USER_ID }}
-          PAGE_ID: ${{ vars.PAGE_ID }}
-          KEYWORD: ${{ vars.KEYWORD }}
-          COMMENT_REPLY_TEXT: ${{ vars.COMMENT_REPLY_TEXT }}
-          DM_TEXT_TEMPLATE: ${{ vars.DM_TEXT }}
-          YOUR_LINK: ${{ vars.YOUR_LINK }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          KEYWORD: ${{ secrets.KEYWORD }}
+          COMMENT_REPLY_TEXT: ${{ secrets.COMMENT_REPLY_TEXT }}
+          DM_TEXT: ${{ secrets.DM_TEXT }}
         run: python bot.py
-      
-      - name: Commit processed comments file
+
+      - name: Commit and Push changes
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add processed_comments.txt
-          # Check if there are changes to commit
-          git diff --staged --quiet || git commit -m "Update processed comments log"
-          git push
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add processed_comments.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed comments" && git push)
