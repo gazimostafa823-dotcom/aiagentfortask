@@ -1,134 +1,90 @@
 import os
 import requests
 import json
-import time
 
-# ── Config from GitHub Secrets / Variables ──────────────────────────────────
-ACCESS_TOKEN       = os.environ["ACCESS_TOKEN"]
-IG_USER_ID         = os.environ["IG_USER_ID"]
-KEYWORD            = os.environ.get("KEYWORD", "link").lower()
-COMMENT_REPLY_TEXT = os.environ.get("COMMENT_REPLY_TEXT", "Check your DM! I sent it.")
-DM_TEXT            = os.environ.get("DM_TEXT", "Here is the link: https://google.com")
+# Load configurations
+ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
+IG_USER_ID = os.getenv('IG_USER_ID')
+KEYWORD = os.getenv('KEYWORD', 'link').lower()
+REPLY_TEXT = os.getenv('COMMENT_REPLY_TEXT', 'Sent you a DM!')
+DM_TEXT = os.getenv('DM_TEXT', 'Here is the link you requested!')
 
-BASE = "https://graph.facebook.com/v19.0"
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def get_recent_media():
-    """Return list of recent media objects for the IG business account."""
-    url = f"{BASE}/{IG_USER_ID}/media"
-    params = {
-        "fields": "id,caption,timestamp",
-        "access_token": ACCESS_TOKEN,
-        "limit": 10,
-    }
-    r = requests.get(url, params=params)
-    r.raise_for_status()
-    return r.json().get("data", [])
-
-
-def get_comments(media_id):
-    """Return all top-level comments on a given media post."""
-    url = f"{BASE}/{media_id}/comments"
-    params = {
-        "fields": "id,text,username,from,timestamp",
-        "access_token": ACCESS_TOKEN,
-    }
-    r = requests.get(url, params=params)
-    r.raise_for_status()
-    return r.json().get("data", [])
-
-
-def reply_to_comment(comment_id, message):
-    """Post a public reply under a comment."""
-    url = f"{BASE}/{comment_id}/replies"
-    data = {
-        "message": message,
-        "access_token": ACCESS_TOKEN,
-    }
-    r = requests.post(url, data=data)
-    r.raise_for_status()
-    return r.json()
-
-
-def send_dm(recipient_id, message):
-    """Send a DM via the Instagram Messaging API."""
-    url = f"{BASE}/{IG_USER_ID}/messages"
-    payload = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": message},
-        "access_token": ACCESS_TOKEN,
-    }
-    r = requests.post(url, json=payload)
-    r.raise_for_status()
-    return r.json()
-
+DB_FILE = "processed_comments.json"
 
 def load_processed():
-    """Load already-handled comment IDs from local cache file."""
-    try:
-        with open("processed_comments.json", "r") as f:
-            return set(json.load(f))
-    except FileNotFoundError:
-        return set()
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
 
-
-def save_processed(ids: set):
-    """Persist handled comment IDs so we never double-reply."""
-    with open("processed_comments.json", "w") as f:
-        json.dump(list(ids), f)
-
-
-# ── Main loop ─────────────────────────────────────────────────────────────────
-
-def run():
-    print(f"[BOT] Starting — watching for keyword: '{KEYWORD}'")
+def save_processed(comment_id):
     processed = load_processed()
+    if comment_id not in processed:
+        processed.append(comment_id)
+        with open(DB_FILE, "w") as f:
+            json.dump(processed, f)
 
-    media_list = get_recent_media()
-    print(f"[BOT] Checking {len(media_list)} recent post(s)…")
+def main():
+    if not ACCESS_TOKEN or not IG_USER_ID:
+        print("❌ ERROR: Missing ACCESS_TOKEN or IG_USER_ID in Secrets!")
+        return
 
-    for media in media_list:
-        media_id = media["id"]
-        comments = get_comments(media_id)
+    processed_list = load_processed()
+    print(f"🤖 Starting bot. Monitoring for keyword: '{KEYWORD}'")
 
+    # 1. Get Media
+    media_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media?access_token={ACCESS_TOKEN}"
+    media_resp = requests.get(media_url).json()
+    
+    if 'data' not in media_resp:
+        print(f"❌ API ERROR: Could not fetch media. Response: {media_resp}")
+        return
+
+    media_items = media_resp.get('data', [])
+    print(f"📸 Found {len(media_items)} posts. Checking comments...")
+
+    for media in media_items:
+        media_id = media['id']
+        comments_url = f"https://graph.facebook.com/v19.0/{media_id}/comments?access_token={ACCESS_TOKEN}"
+        comments_resp = requests.get(comments_url).json()
+        
+        comments = comments_resp.get('data', [])
         for comment in comments:
-            cid  = comment["id"]
-            text = comment.get("text", "").lower()
+            comment_id = comment.get('id')
+            text = comment.get('text', '').lower()
 
-            if cid in processed:
-                continue  # already handled
+            # Skip if already processed
+            if comment_id in processed_list:
+                continue
 
+            # Check for keyword
             if KEYWORD in text:
-                commenter = comment.get("from", {})
-                commenter_id   = commenter.get("id")
-                commenter_name = commenter.get("username", commenter_id)
+                print(f"🎯 Found keyword in comment {comment_id}: '{text}'")
 
-                print(f"[BOT] Keyword found in comment {cid} by @{commenter_name}")
-
-                # 1️⃣  Reply publicly on the comment
-                try:
-                    reply_to_comment(cid, COMMENT_REPLY_TEXT)
-                    print(f"[BOT]   ✅ Replied to comment {cid}")
-                except Exception as e:
-                    print(f"[BOT]   ⚠️  Comment reply failed: {e}")
-
-                # 2️⃣  Send DM with the link
-                if commenter_id:
-                    try:
-                        send_dm(commenter_id, DM_TEXT)
-                        print(f"[BOT]   ✅ DM sent to {commenter_id}")
-                    except Exception as e:
-                        print(f"[BOT]   ⚠️  DM failed: {e}")
+                # A. Public Reply to Comment
+                reply_url = f"https://graph.facebook.com/v19.0/{comment_id}/replies"
+                r_payload = {'message': REPLY_TEXT, 'access_token': ACCESS_TOKEN}
+                r_resp = requests.post(reply_url, data=r_payload).json()
+                
+                if 'id' in r_resp:
+                    print(f" ✅ Public reply sent!")
                 else:
-                    print("[BOT]   ⚠️  No commenter ID — cannot send DM")
+                    print(f" ❌ Public reply failed: {r_resp}")
 
-                processed.add(cid)
-                time.sleep(1)  # gentle rate-limit buffer
+                # B. Private DM Reply (The correct way for IG comments)
+                dm_url = f"https://graph.facebook.com/v19.0/{comment_id}/private_replies"
+                d_payload = {'message': DM_TEXT, 'access_token': ACCESS_TOKEN}
+                d_resp = requests.post(dm_url, data=d_payload).json()
 
-    save_processed(processed)
-    print("[BOT] Done.")
-
+                if d_resp.get('success') or 'id' in d_resp:
+                    print(f" ✅ Private DM sent!")
+                else:
+                    print(f" ❌ Private DM failed: {d_resp}")
+                
+                save_processed(comment_id)
 
 if __name__ == "__main__":
-    run()
+    main()
