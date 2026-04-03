@@ -1,14 +1,13 @@
-name: Instagram Automation Bot
+name: Instagram Daily Agent
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # Runs every 10 minutes
-  workflow_dispatch:      # Allows manual trigger
+    - cron: '0 0 * * *'  # This runs once every 24 hours (Midnight UTC)
+  workflow_dispatch:      # Allows you to click "Run" manually whenever you want
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Added permissions to allow the bot to save the "processed_comments" file back to GitHub
     permissions:
       contents: write
 
@@ -24,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run Bot
+      - name: Run Agent
         env:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
@@ -33,9 +32,9 @@ jobs:
           DM_TEXT: ${{ secrets.DM_TEXT }}
         run: python bot.py
 
-      - name: Commit and Push changes
+      - name: Save Progress
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add processed_comments.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed comments" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed log" && git push)
