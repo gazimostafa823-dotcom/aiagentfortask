@@ -1,44 +1,41 @@
-name: Instagram Comment → DM Bot
+name: Instagram Automation Bot
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # runs every 5 minutes, 24 / 7
-  workflow_dispatch:          # lets you trigger it manually from the Actions tab
+    - cron: '*/10 * * * *' # Runs every 10 minutes
+  workflow_dispatch:      # Allows manual trigger
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
+    # Added permissions to allow the bot to save the "processed_comments" file back to GitHub
+    permissions:
+      contents: write
 
     steps:
-      # ── 1. Checkout repo ────────────────────────────────────────────────────
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Cache the processed-comments file between runs ──────────────────
-      - name: Cache processed comments
-        uses: actions/cache@v4
-        with:
-          path: processed_comments.json
-          key: processed-comments-${{ github.run_id }}
-          restore-keys: |
-            processed-comments-
-
-      # ── 3. Set up Python ────────────────────────────────────────────────────
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.x'
 
-      # ── 4. Install dependencies ─────────────────────────────────────────────
       - name: Install dependencies
         run: pip install requests
 
-      # ── 5. Run the bot ──────────────────────────────────────────────────────
-      - name: Run bot
+      - name: Run Bot
         env:
-          ACCESS_TOKEN:        ${{ secrets.ACCESS_TOKEN }}
-          IG_USER_ID:          ${{ vars.IG_USER_ID }}
-          KEYWORD:             ${{ vars.KEYWORD }}
-          COMMENT_REPLY_TEXT:  ${{ vars.COMMENT_REPLY_TEXT }}
-          DM_TEXT:             ${{ vars.DM_TEXT }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          KEYWORD: ${{ secrets.KEYWORD }}
+          COMMENT_REPLY_TEXT: ${{ secrets.COMMENT_REPLY_TEXT }}
+          DM_TEXT: ${{ secrets.DM_TEXT }}
         run: python bot.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add processed_comments.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update processed comments" && git push)
