@@ -3,87 +3,59 @@ import requests
 import json
 from datetime import datetime
 
-# Load configurations from environment variables
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
-IG_USER_ID = os.getenv('IG_USER_ID')
-KEYWORD = os.getenv('KEYWORD', 'link').lower()
-REPLY_TEXT = os.getenv('COMMENT_REPLY_TEXT', 'Sent you a DM!')
-DM_TEXT = os.getenv('DM_TEXT', 'Here is the link you requested!')
-
 DB_FILE = "processed_comments.json"
+RULES_FILE = "rules.json"
 GRAPH_API_VERSION = "v19.0"
 
-def load_processed():
-    """Loads the list of already processed comment IDs."""
-    if os.path.exists(DB_FILE):
+def load_json(filepath):
+    if os.path.exists(filepath):
         try:
-            with open(DB_FILE, "r") as f:
+            with open(filepath, "r") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            return []
-    return []
+            return {} if filepath == RULES_FILE else []
+    return {} if filepath == RULES_FILE else []
 
 def save_processed(processed_list):
-    """Saves the list of processed comment IDs back to the JSON file."""
     with open(DB_FILE, "w") as f:
         json.dump(processed_list, f, indent=4)
 
 def main():
-    if not ACCESS_TOKEN or not IG_USER_ID:
-        print("❌ CONFIG ERROR: Missing ACCESS_TOKEN or IG_USER_ID Secrets.")
+    rules = load_json(RULES_FILE)
+    if not rules:
+        print("No active rules found in rules.json. Exiting.")
         return
 
-    processed_list = load_processed()
+    processed_list = load_json(DB_FILE)
     print(f"🤖 AGENT STARTING: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"🔍 Searching for keyword: '{KEYWORD}'")
 
-    # 1. Get all Media (limit to last 50 posts)
-    media_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{IG_USER_ID}/media?limit=50&access_token={ACCESS_TOKEN}"
-    media_resp = requests.get(media_url).json()
-    media_items = media_resp.get('data', [])
+    # Loop through only the posts that have active rules set up in the dashboard
+    for post_id, rule in rules.items():
+        keyword = rule['keyword']
+        reply_text = rule['reply_text']
+        print(f"🔍 Checking Post ID: {post_id} for keyword '{keyword}'")
 
-    if not media_items:
-        print("Empty media list or error fetching media:", media_resp)
-        return
-
-    # 2. Iterate through posts to find comments
-    for media in media_items:
-        media_id = media['id']
-        comments_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}/comments?access_token={ACCESS_TOKEN}"
+        comments_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{post_id}/comments?access_token={ACCESS_TOKEN}"
         comments_resp = requests.get(comments_url).json()
         
         for comment in comments_resp.get('data', []):
             comment_id = comment.get('id')
             text = comment.get('text', '').lower()
 
-            if KEYWORD in text and comment_id not in processed_list:
+            if keyword in text and comment_id not in processed_list:
                 print(f"🎯 Match found on comment ID: {comment_id}")
 
-                # STEP A: Public Reply to the comment
                 reply_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{comment_id}/replies"
-                reply_resp = requests.post(reply_url, data={'message': REPLY_TEXT, 'access_token': ACCESS_TOKEN}).json()
+                reply_resp = requests.post(reply_url, data={'message': reply_text, 'access_token': ACCESS_TOKEN}).json()
                 
                 if 'id' in reply_resp:
                     print("  ✅ Public reply sent.")
                 else:
-                    print(f"  ⚠️ Reply Failed: {reply_resp.get('error', {}).get('message', 'Unknown error')}")
+                    print(f"  ⚠️ Reply Failed: {reply_resp.get('error', {}).get('message')}")
 
-                # STEP B: Private DM to the user
-                dm_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{comment_id}/private_replies"
-                dm_resp = requests.post(dm_url, data={'message': DM_TEXT, 'access_token': ACCESS_TOKEN}).json()
-
-                if dm_resp.get('success') or 'id' in dm_resp:
-                    print("  ✅ DM sent to user.")
-                else:
-                    msg = dm_resp.get('error', {}).get('message', 'Unknown error')
-                    print(f"  ❌ DM Failed: {msg}")
-                    if "permissions" in msg.lower() or "access" in msg.lower():
-                        print("  💡 TIP: Check 'Allow Access to Messages' in your IG App settings.")
-
-                # Mark as processed regardless of success to prevent infinite spam loops on broken comments
                 processed_list.append(comment_id)
 
-    # Save progress
     save_processed(processed_list)
     print("🤖 Agent Task Completed.")
 
