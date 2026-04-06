@@ -1,9 +1,22 @@
-name: Instagram Daily Agent
+name: Instagram Bot Automations
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Runs once every 24 hours (Midnight UTC)
-  workflow_dispatch:     # Allows you to click "Run workflow" manually
+    - cron: '0 * * * *'  # Runs automatically every hour to check for new comments
+  workflow_dispatch:
+    inputs:
+      post_url:
+        description: 'Target Post URL (Leave blank to just run the bot)'
+        required: false
+        type: string
+      keyword:
+        description: 'Trigger Keyword (e.g. link)'
+        required: false
+        type: string
+      reply_text:
+        description: 'Public Reply Text'
+        required: false
+        type: string
 
 jobs:
   run-bot:
@@ -27,24 +40,22 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
-          KEYWORD: ${{ secrets.KEYWORD }}
-          COMMENT_REPLY_TEXT: ${{ secrets.COMMENT_REPLY_TEXT }}
-          DM_TEXT: ${{ secrets.DM_TEXT }}
+          # The inputs from the GitHub Web Form:
+          INPUT_POST_URL: ${{ inputs.post_url }}
+          INPUT_KEYWORD: ${{ inputs.keyword }}
+          INPUT_REPLY: ${{ inputs.reply_text }}
         run: python bot.py
 
-      - name: Save Progress
+      - name: Save Rules and Progress
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          touch processed_comments.json rules.json
+          git add processed_comments.json rules.json
           
-          # Create the file if it doesn't exist to prevent git add errors
-          touch processed_comments.json 
-          git add processed_comments.json
-          
-          # Only commit and push if there are actual changes
           if ! git diff --staged --quiet; then
-            git commit -m "chore: update processed comments log [skip ci]"
+            git commit -m "chore: update bot rules and logs [skip ci]"
             git push
           else
-            echo "No new comments to save."
+            echo "No new rules or comments to save."
           fi
