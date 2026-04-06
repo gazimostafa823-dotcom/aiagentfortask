@@ -1,9 +1,18 @@
 import os
 import requests
 import json
+import re
 from datetime import datetime
 
+# --- Configuration & Secrets ---
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
+IG_USER_ID = os.getenv('IG_USER_ID')
+
+# --- Inputs from GitHub Web Form ---
+INPUT_POST_URL = os.getenv('INPUT_POST_URL', '').strip()
+INPUT_KEYWORD = os.getenv('INPUT_KEYWORD', '').lower().strip()
+INPUT_REPLY = os.getenv('INPUT_REPLY', '').strip()
+
 DB_FILE = "processed_comments.json"
 RULES_FILE = "rules.json"
 GRAPH_API_VERSION = "v19.0"
@@ -17,47 +26,80 @@ def load_json(filepath):
             return {} if filepath == RULES_FILE else []
     return {} if filepath == RULES_FILE else []
 
-def save_processed(processed_list):
-    with open(DB_FILE, "w") as f:
-        json.dump(processed_list, f, indent=4)
+def save_json(filepath, data):
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=4)
+
+def extract_shortcode(url):
+    match = re.search(r"(?:p|reel)/([^/?#&]+)", url)
+    return match.group(1) if match else url
 
 def main():
-    rules = load_json(RULES_FILE)
-    if not rules:
-        print("No active rules found in rules.json. Exiting.")
+    if not ACCESS_TOKEN or not IG_USER_ID:
+        print("❌ CONFIG ERROR: Missing Meta Secrets.")
         return
 
+    # 1. Update Rules if the user filled out the GitHub form
+    rules = load_json(RULES_FILE)
+    if INPUT_POST_URL and INPUT_KEYWORD and INPUT_REPLY:
+        shortcode = extract_shortcode(INPUT_POST_URL)
+        if shortcode:
+            # Save the new rule to our dictionary
+            rules[shortcode] = {
+                "keyword": INPUT_KEYWORD,
+                "reply_text": INPUT_REPLY
+            }
+            save_json(RULES_FILE, rules)
+            print(f"✅ NEW RULE SAVED: Post '{shortcode}' -> Keyword '{INPUT_KEYWORD}'")
+
+    if not rules:
+        print("⚠️ No rules configured yet. Go to GitHub Actions and add a rule!")
+        return
+
+    # 2. Run the Bot for all saved rules
     processed_list = load_json(DB_FILE)
-    print(f"🤖 AGENT STARTING: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🤖 BOT STARTING: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Loop through only the posts that have active rules set up in the dashboard
-    for post_id, rule in rules.items():
-        keyword = rule['keyword']
-        reply_text = rule['reply_text']
-        print(f"🔍 Checking Post ID: {post_id} for keyword '{keyword}'")
+    # Fetch recent media to map shortcodes to actual Media IDs
+    media_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{IG_USER_ID}/media?fields=id,shortcode&limit=50&access_token={ACCESS_TOKEN}"
+    media_items = requests.get(media_url).json().get('data', [])
 
-        comments_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{post_id}/comments?access_token={ACCESS_TOKEN}"
-        comments_resp = requests.get(comments_url).json()
+    for media in media_items:
+        shortcode = media.get('shortcode')
         
-        for comment in comments_resp.get('data', []):
-            comment_id = comment.get('id')
-            text = comment.get('text', '').lower()
+        # If this post has a rule setup in our database
+        if shortcode in rules:
+            rule = rules[shortcode]
+            media_id = media['id']
+            keyword = rule['keyword']
+            reply_text = rule['reply_text']
 
-            if keyword in text and comment_id not in processed_list:
-                print(f"🎯 Match found on comment ID: {comment_id}")
+            print(f"🔍 Checking Post '{shortcode}' for keyword '{keyword}'...")
+            
+            comments_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}/comments?access_token={ACCESS_TOKEN}"
+            comments_resp = requests.get(comments_url).json()
+            
+            for comment in comments_resp.get('data', []):
+                comment_id = comment.get('id')
+                text = comment.get('text', '').lower()
 
-                reply_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{comment_id}/replies"
-                reply_resp = requests.post(reply_url, data={'message': reply_text, 'access_token': ACCESS_TOKEN}).json()
-                
-                if 'id' in reply_resp:
-                    print("  ✅ Public reply sent.")
-                else:
-                    print(f"  ⚠️ Reply Failed: {reply_resp.get('error', {}).get('message')}")
+                if keyword in text and comment_id not in processed_list:
+                    print(f"  🎯 Match found! Comment ID: {comment_id}")
 
-                processed_list.append(comment_id)
+                    # Public Reply
+                    reply_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{comment_id}/replies"
+                    reply_resp = requests.post(reply_url, data={'message': reply_text, 'access_token': ACCESS_TOKEN}).json()
+                    
+                    if 'id' in reply_resp:
+                        print("    ✅ Reply sent successfully.")
+                    else:
+                        print(f"    ⚠️ Failed to reply: {reply_resp}")
 
-    save_processed(processed_list)
-    print("🤖 Agent Task Completed.")
+                    processed_list.append(comment_id)
+
+    # Save the updated list of processed comments
+    save_json(DB_FILE, processed_list)
+    print("🏁 Bot finished checking all rules.")
 
 if __name__ == "__main__":
     main()
