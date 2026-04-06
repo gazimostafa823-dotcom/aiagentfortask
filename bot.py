@@ -40,54 +40,56 @@ def main():
     media_items = media_resp.get('data', [])
 
     if not media_items:
-        print("Empty media list or error:", media_resp)
+        print("❌ Empty media list or error:", media_resp)
         return
 
     for media in media_items:
         media_id = media['id']
         
-        # Added 'username' to the fields to get the commenter's handle
+        # Added 'username' to the fields request
         comments_url = f"https://graph.facebook.com/v19.0/{media_id}/comments?fields=id,text,username&access_token={ACCESS_TOKEN}"
         comments_resp = requests.get(comments_url).json()
         
+        # Safely handle API errors if they occur
+        if 'error' in comments_resp:
+            print(f"⚠️ Error fetching comments for post {media_id}: {comments_resp['error']['message']}")
+            continue
+
         for comment in comments_resp.get('data', []):
             comment_id = comment.get('id')
             text = comment.get('text', '').lower()
-            username = comment.get('username', 'there') # Gets username, defaults to 'there' if hidden
+            username = comment.get('username', 'there') # Fallback to 'there' if hidden
 
             if KEYWORD in text and comment_id not in processed_list:
-                print(f"🎯 Match found on comment ID: {comment_id} by @{username}")
+                print(f"\n🎯 Match found on comment ID: {comment_id} | User: @{username}")
 
-                # STEP A: Public Reply (Now includes their @username)
+                # STEP A: Public Reply (Now mentions their username)
                 reply_url = f"https://graph.facebook.com/v19.0/{comment_id}/replies"
-                personalized_reply = f"@{username} {REPLY_TEXT}"
-                requests.post(reply_url, data={'message': personalized_reply, 'access_token': ACCESS_TOKEN})
+                final_reply_text = f"@{username} {REPLY_TEXT}"
                 
-                # STEP B: Private DM (Fixed to use Instagram Messenger API)
-                dm_url = f"https://graph.facebook.com/v19.0/me/messages?access_token={ACCESS_TOKEN}"
-                payload = {
-                    "recipient": {
-                        "comment_id": comment_id
-                    },
-                    "message": {
-                        "text": DM_TEXT
-                    }
-                }
-                headers = {"Content-Type": "application/json"}
-                dm_resp = requests.post(dm_url, json=payload, headers=headers).json()
-
-                if dm_resp.get('message_id') or dm_resp.get('recipient_id'):
-                    print(f"  ✅ DM sent successfully to @{username}.")
+                reply_resp = requests.post(reply_url, data={'message': final_reply_text, 'access_token': ACCESS_TOKEN}).json()
+                
+                if 'id' in reply_resp:
+                    print(f"  ✅ Comment Reply sent publicly to @{username}")
                 else:
-                    msg = dm_resp.get('error', {}).get('message', str(dm_resp))
-                    print(f"  ❌ DM Failed: {msg}")
-                    if "permissions" in msg.lower():
-                        print("  💡 TIP: Open Instagram App -> Settings -> Messages and story replies -> Message controls -> Turn ON 'Allow access to messages'.")
+                    print(f"  ❌ Comment Reply Failed: {reply_resp.get('error', {}).get('message', reply_resp)}")
+                
+                # STEP B: Private DM (Your original working method)
+                dm_url = f"https://graph.facebook.com/v19.0/{comment_id}/private_replies"
+                dm_resp = requests.post(dm_url, data={'message': DM_TEXT, 'access_token': ACCESS_TOKEN}).json()
 
+                if dm_resp.get('success') or 'id' in dm_resp:
+                    print(f"  ✅ DM Link sent successfully to @{username}")
+                else:
+                    msg = dm_resp.get('error', {}).get('message', '')
+                    print(f"  ❌ DM Failed to @{username}: {msg}")
+                    print(f"  🔍 RAW DM ERROR DATA: {dm_resp}") # This will tell us EXACTLY why the link fails
+
+                # Add to processed list regardless so it doesn't loop forever on a failed comment
                 processed_list.append(comment_id)
 
     save_processed(processed_list)
-    print("🤖 Agent Task Completed.")
+    print("\n🤖 Agent Task Completed.")
 
 if __name__ == "__main__":
     main()
