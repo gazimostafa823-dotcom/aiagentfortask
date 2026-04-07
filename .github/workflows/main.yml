@@ -46,7 +46,7 @@ jobs:
           INPUT_POST_URL: ${{ inputs.post_url }}
           INPUT_KEYWORD: ${{ inputs.keyword }}
           INPUT_REPLY: ${{ inputs.reply_text }}
-        run: python bot.py
+        run: python agent.py
 
       - name: Save Rules and Progress
         run: |
