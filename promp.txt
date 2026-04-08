@@ -1,0 +1,22 @@
+Build a Python-based Instagram comment auto-reply bot that runs on GitHub Actions. The system consists of two files: a Python script (agent.py) and a GitHub Actions workflow (.github/workflows/main.yml).
+How it works:
+The bot monitors specific Instagram posts for comments containing trigger keywords, then automatically replies to those comments publicly. All configuration is stored in JSON files committed back to the repository so state persists between runs.
+Python Script (agent.py) requirements:
+Read credentials (ACCESS_TOKEN, IG_USER_ID) and optional rule inputs (INPUT_POST_URL, INPUT_KEYWORD, INPUT_REPLY) from environment variables.
+Maintain two JSON files as a lightweight database:
+rules.json — a dictionary mapping Instagram post shortcodes to their keyword and reply text.
+processed_comments.json — a list of comment IDs already replied to, to avoid duplicate replies.
+If INPUT_POST_URL, INPUT_KEYWORD, and INPUT_REPLY are all provided, extract the shortcode from the URL using regex (supporting both /p/ and /reel/ URL formats) and save a new rule to rules.json.
+Using the Meta Graph API (v19.0), fetch the account's 50 most recent media items and their shortcodes via /{IG_USER_ID}/media.
+For each media item whose shortcode matches a saved rule, fetch its comments via /{media_id}/comments.
+For each comment: if the comment text contains the rule's keyword (case-insensitive) and the comment ID is not in the processed list, post a public reply via /{comment_id}/replies with the configured reply text.
+After processing, save the updated processed_comments.json.
+Print clear emoji-prefixed status messages throughout for easy log reading in GitHub Actions.
+GitHub Actions Workflow (.github/workflows/main.yml) requirements:
+Trigger on two events:
+A scheduled cron every hour (0 * * * *) to automatically check for new comments.
+A manual workflow_dispatch trigger with three optional inputs: post_url, keyword, and reply_text — so users can add new rules through the GitHub Actions web UI.
+The job should run on ubuntu-latest with contents: write permission so it can commit files back to the repo.
+Steps: checkout the repo with full history (fetch-depth: 0), set up Python 3.10, install requests, run agent.py with all secrets and inputs passed as environment variables.
+After the script runs, commit any changes to processed_comments.json and rules.json back to the main branch. Use git pull --rebase before pushing to avoid race conditions. Skip the commit if no files changed. Use [skip ci] in the commit message to prevent infinite workflow loops.
+Store ACCESS_TOKEN and IG_USER_ID as GitHub Actions Secrets, never hardcoded.
